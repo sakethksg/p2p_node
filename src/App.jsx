@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import ThemeToggle from './components/ThemeToggle';
 import PeerConnection from './components/PeerConnection';
 import FileTransfer from './components/FileTransfer';
@@ -7,15 +7,28 @@ function App() {
   const [peer, setPeer] = useState(null);
   const [connected, setConnected] = useState(false);
   const [peerId, setPeerId] = useState('');
+  const [connectionStatus, setConnectionStatus] = useState('Disconnected');
 
   const handlePeerConnection = (data) => {
-    console.log('Received data:', data);
+    console.log('Received data in App:', data);
   };
 
-  const handlePeerUpdate = (newPeer, isConnected) => {
+  const handlePeerUpdate = (newPeer, isConnected, remotePeerId) => {
+    console.log('Peer update:', { newPeer, isConnected, remotePeerId });
     setPeer(newPeer);
     setConnected(isConnected);
+    
+    if (remotePeerId) {
+      setPeerId(remotePeerId);
+    }
+    
+    setConnectionStatus(isConnected ? 'Connected' : 'Disconnected');
   };
+
+  useEffect(() => {
+    // Log connection status changes
+    console.log('Connection status changed:', connectionStatus, 'Connected:', connected);
+  }, [connectionStatus, connected]);
 
   return (
     <div className="min-h-screen bg-gray-100 dark:bg-[#1a1f2e] transition-colors">
@@ -43,8 +56,13 @@ function App() {
           <div className="bg-white dark:bg-[#242938] rounded-2xl shadow-xl p-8">
             <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-6">
               Upload File
+              {connected && <span className="text-sm text-green-400 ml-2">(Connected)</span>}
             </h2>
-            <FileTransfer peer={peer} connected={connected} peerId={peerId} />
+            <FileTransfer 
+              peer={peer} 
+              connected={connected} 
+              peerId={peerId} 
+            />
           </div>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Peer from 'peerjs';
 import { io } from 'socket.io-client';
 import { ClipboardDocumentIcon } from '@heroicons/react/24/outline';
@@ -10,53 +10,117 @@ export default function PeerConnection({ onPeerConnection, onPeerUpdate }) {
   const [connection, setConnection] = useState(null);
   const [status, setStatus] = useState('Disconnected');
   const [copied, setCopied] = useState(false);
+  const [socketConnected, setSocketConnected] = useState(false);
+  const socket = useRef(null);
 
   useEffect(() => {
-    const newPeer = new Peer();
+    // Connect to socket.io server
+    socket.current = io('http://localhost:3000');
+    
+    socket.current.on('connect', () => {
+      console.log('Socket connected:', socket.current.id);
+      setSocketConnected(true);
+    });
+
+    socket.current.on('connect_error', (error) => {
+      console.error('Socket connection error:', error);
+      setStatus('Signaling server error');
+    });
+
+    return () => {
+      if (socket.current) {
+        socket.current.disconnect();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    // Only create the peer if the socket is connected
+    if (!socketConnected) return;
+    
+    const newPeer = new Peer({
+      host: 'localhost',
+      port: 3000,
+      path: '/peerjs',
+      debug: 3,
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:global.stun.twilio.com:3478' }
+        ]
+      }
+    });
     
     newPeer.on('open', (id) => {
+      console.log('Peer ID:', id);
       setPeerId(id);
       setStatus('Ready');
     });
 
     newPeer.on('connection', (conn) => {
+      console.log('Incoming connection from:', conn.peer);
       handleConnection(conn);
     });
 
     newPeer.on('error', (error) => {
       console.error('Peer error:', error);
-      setStatus('Connection error');
+      setStatus('Connection error: ' + error.type);
     });
 
     setPeer(newPeer);
 
     return () => {
-      newPeer.destroy();
+      if (newPeer) {
+        newPeer.destroy();
+      }
     };
-  }, []);
+  }, [socketConnected]);
 
   const handleConnection = useCallback((conn) => {
     setConnection(conn);
-    setStatus('Connected');
-    setRemotePeerId(conn.peer);
-    onPeerUpdate(conn, true);
     
-    conn.on('data', (data) => {
-      onPeerConnection(data);
-    });
-
-    conn.on('close', () => {
-      setStatus('Ready');
-      setConnection(null);
-      setRemotePeerId('');
-      onPeerUpdate(null, false);
+    // Wait for the connection to be fully established
+    conn.on('open', () => {
+      console.log('Connection established with:', conn.peer);
+      setStatus('Connected');
+      setRemotePeerId(conn.peer);
+      onPeerUpdate(conn, true, conn.peer);
+      
+      conn.on('data', (data) => {
+        console.log('Received data:', data);
+        onPeerConnection(data);
+      });
+      
+      conn.on('close', () => {
+        console.log('Connection closed');
+        setStatus('Ready');
+        setConnection(null);
+        setRemotePeerId('');
+        onPeerUpdate(null, false, null);
+      });
+      
+      conn.on('error', (err) => {
+        console.error('Connection error:', err);
+        setStatus('Connection error');
+        onPeerUpdate(null, false, null);
+      });
     });
   }, [onPeerConnection, onPeerUpdate]);
 
   const connectToPeer = () => {
     if (!peer || !remotePeerId) return;
-    const conn = peer.connect(remotePeerId);
-    handleConnection(conn);
+    
+    try {
+      console.log('Connecting to peer:', remotePeerId);
+      setStatus('Connecting...');
+      const conn = peer.connect(remotePeerId, {
+        reliable: true
+      });
+      handleConnection(conn);
+    } catch (error) {
+      console.error('Error connecting to peer:', error);
+      setStatus('Connection failed');
+    }
   };
 
   const disconnect = () => {
@@ -65,7 +129,7 @@ export default function PeerConnection({ onPeerConnection, onPeerUpdate }) {
       setStatus('Ready');
       setConnection(null);
       setRemotePeerId('');
-      onPeerUpdate(null, false);
+      onPeerUpdate(null, false, null);
     }
   };
 
@@ -128,7 +192,7 @@ export default function PeerConnection({ onPeerConnection, onPeerUpdate }) {
           {!connection ? (
             <button
               onClick={connectToPeer}
-              disabled={!remotePeerId}
+              disabled={!remotePeerId || !peer}
               className="px-6 py-3 bg-indigo-600 text-white rounded-lg
                        hover:bg-indigo-700 disabled:opacity-50
                        disabled:cursor-not-allowed transition-colors"
@@ -151,6 +215,7 @@ export default function PeerConnection({ onPeerConnection, onPeerUpdate }) {
         <div className={`w-2 h-2 rounded-full ${
           status === 'Connected' ? 'bg-green-400' :
           status === 'Ready' ? 'bg-yellow-400' :
+          status === 'Connecting...' ? 'bg-blue-400' :
           'bg-red-400'
         }`}></div>
         <span>Status: {status}</span>
